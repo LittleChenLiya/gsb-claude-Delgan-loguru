@@ -240,6 +240,26 @@ class Core:
         self.lock = create_logger_lock()
 
 
+def _warn_reentrant_patcher():
+    # Controlled diagnostic emitted when a patcher (or a sink called by a patcher) logs a new
+    # message while the same patcher chain is already running in the current context. The nested
+    # call is skipped entirely: no patcher is re-run and the record is not leaked to handlers.
+    # The message is fixed on purpose, it must not contain any part of the record.
+    if not sys.stderr:
+        return
+
+    try:
+        sys.stderr.write("--- Logging error in Loguru Patcher ---\n")
+        sys.stderr.write(
+            "A log was attempted from within a patcher while the same patcher chain was "
+            "already running. The reentrant log has been skipped to avoid infinite recursion; "
+            "neither the patchers nor the handlers were executed.\n"
+        )
+        sys.stderr.write("--- End of logging error ---\n")
+    except OSError:
+        pass
+
+
 class Logger:
     """An object to dispatch logging messages to configured handlers.
 
@@ -2189,11 +2209,42 @@ class Logger:
         else:
             colored_message = None
 
-        if core.patcher:
-            core.patcher(log_record)
+        # Patchers are executed within a reentrancy guard keyed by the real composition of the
+        # patcher chain (the configured patcher followed by the patched loggers). If a patcher
+        # attempts to log a new message while the same chain is already running in the current
+        # context, the nested call is skipped and a controlled diagnostic is emitted instead of
+        # recursing forever. The guard is stored in thread-local storage, so it only affects the
+        # calling context: messages logged from another thread (or from a logger without any
+        # patcher configured) are not blocked. The set is always cleaned up, even if a patcher
+        # raises, so logging remains available afterwards.
+        core_patcher = core.patcher
+        chain = tuple(patcher for patcher in (core_patcher, *patchers) if patcher is not None)
 
-        for patcher in patchers:
-            patcher(log_record)
+        if chain:
+            active_patchers = getattr(core.thread_locals, "active_patchers", None)
+            if active_patchers is None:
+                active_patchers = set()
+                core.thread_locals.active_patchers = active_patchers
+
+            if any(patcher in active_patchers for patcher in chain):
+                _warn_reentrant_patcher()
+                return
+
+            for patcher in chain:
+                active_patchers.add(patcher)
+            try:
+                if core_patcher:
+                    core_patcher(log_record)
+                for patcher in patchers:
+                    patcher(log_record)
+            finally:
+                for patcher in chain:
+                    active_patchers.discard(patcher)
+        else:
+            if core_patcher:
+                core_patcher(log_record)
+            for patcher in patchers:
+                patcher(log_record)
 
         for handler in core.handlers.values():
             handler.emit(log_record, level_id, from_decorator, raw, colored_message)
