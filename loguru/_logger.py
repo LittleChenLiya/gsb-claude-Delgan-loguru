@@ -154,6 +154,15 @@ start_time = aware_now()
 
 context = ContextVar("loguru_context", default={})
 
+# Identities of the patcher chains currently being applied in the present
+# execution context (thread / asyncio task). This is used to detect a patcher
+# which would (indirectly) log again through the very same chain, so that the
+# reentrant call can be diverted to a fixed bypass instead of recursing
+# endlessly. Because it is a |ContextVar|, the protection is scoped to the
+# calling context: other threads or tasks are not affected, and the state is
+# reliably restored (with ``ContextVar.reset()``) even if a patcher raises.
+patcher_context = ContextVar("loguru_patcher_context", default=None)
+
 
 class Core:
     def __init__(self):
@@ -1583,6 +1592,15 @@ class Logger:
         The logger can be patched multiple times. In this case, the functions are called in the
         same order as they are added.
 
+        A ``patcher`` should not log through the very same chain of patchers it belongs to, as
+        this would recurse endlessly. Such reentrant calls are detected and diverted to a fixed
+        bypass: the patchers of the chain are skipped for the inner record (which is therefore
+        not exposed to them) and a ``record["extra"]["patcher_recursion_bypassed"]`` flag is set
+        instead, while the message is still emitted to the handlers exactly once. The protection
+        is scoped to the current execution context, so other threads and tasks logging through
+        the same chain are not blocked, and the guard is properly released even if the ``patcher``
+        raises an exception. Loggers without any ``patcher`` are not guarded at all.
+
         Parameters
         ----------
         patcher: |callable|_
@@ -1795,7 +1813,9 @@ class Logger:
             A function that will be applied to the record dict of each logged messages across all
             modules using the logger. It should modify the dict in-place without returning anything.
             The function is executed prior to the one possibly added by the |patch| method. If not
-            ``None``, this will replace previously configured ``patcher`` function.
+            ``None``, this will replace previously configured ``patcher`` function. Reentrant
+            logging through the same chain from within the ``patcher`` is safely bypassed, see
+            |patch| for details.
         activation : |list| of |tuple|, optional
             A list of ``(name, state)`` tuples which denotes which loggers should be enabled (if
             ``state`` is ``True``) or disabled (if ``state`` is ``False``). The calls to |enable|
@@ -2190,10 +2210,31 @@ class Logger:
             colored_message = None
 
         if core.patcher:
-            core.patcher(log_record)
+            patchers = [core.patcher, *patchers]
 
-        for patcher in patchers:
-            patcher(log_record)
+        if patchers:
+            # The chain identity is derived from the actual patcher composition,
+            # so that loggers sharing the same patchers are protected together
+            # while independent chains do not interfere with each other.
+            chain = tuple(map(id, patchers))
+            active_chains = patcher_context.get()
+            if active_chains is not None and chain in active_chains:
+                # Reentrant call: a patcher of this very chain is currently
+                # running in this context. Take the fixed bypass instead of
+                # recursing endlessly: the patchers are not run again (hence
+                # the full record is not exposed to them a second time) and a
+                # controlled diagnostic marker is attached to the record, which
+                # is still emitted to the handlers exactly once.
+                log_record["extra"]["patcher_recursion_bypassed"] = True
+            else:
+                token = patcher_context.set(
+                    (chain,) if active_chains is None else (*active_chains, chain)
+                )
+                try:
+                    for patcher in patchers:
+                        patcher(log_record)
+                finally:
+                    patcher_context.reset(token)
 
         for handler in core.handlers.values():
             handler.emit(log_record, level_id, from_decorator, raw, colored_message)
