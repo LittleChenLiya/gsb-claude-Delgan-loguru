@@ -116,8 +116,13 @@ class Record(TypedDict):
     thread: RecordThread
     time: datetime
 
+class ProducerStamp(NamedTuple):
+    producer_id: Any
+    sequence: int
+
 class Message(str):
     record: Record
+    producer: Optional[ProducerStamp]
 
 class Writable(Protocol):
     def write(self, message: Message) -> Any: ...

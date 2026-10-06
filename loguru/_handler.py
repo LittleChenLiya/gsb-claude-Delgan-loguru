@@ -3,6 +3,7 @@ import json
 import multiprocessing
 import os
 import threading
+from collections import deque, namedtuple
 from contextlib import contextmanager
 from threading import Thread
 
@@ -24,8 +25,22 @@ def memoize(function):
     return functools.lru_cache(maxsize=64)(function)
 
 
+#: Attribution metadata attached to enqueued messages. It identifies the producer of the
+#: record (``producer_id``) and the position of the message in the local, per-producer
+#: sequence of successfully emitted messages (``sequence``, starting at 1). The stamp is
+#: computed at emission time (never from the arrival order in the writer thread) and the
+#: sequence number is committed only once the record has been successfully serialized and
+#: enqueued, so a failed serialization neither consumes a number nor leaves a receipt.
+#: The stamp deliberately holds plain values only: it does not retain the record, its
+#: "extra" dict nor any other context value.
+ProducerStamp = namedtuple("ProducerStamp", ["producer_id", "sequence"])
+
+#: Maximum number of sent receipts kept per handler, to avoid unbounded memory growth.
+MAX_KEPT_RECEIPTS = 1024
+
+
 class Message(str):
-    __slots__ = ("record",)
+    __slots__ = ("record", "producer")
 
 
 class Handler:
@@ -75,6 +90,8 @@ class Handler:
         self._confirmation_lock = None
         self._owner_process_pid = None
         self._thread = None
+        self._producer_sequences = {}
+        self._send_receipts = deque(maxlen=MAX_KEPT_RECEIPTS)
 
         if self._is_formatter_dynamic:
             if self._colorize:
@@ -201,8 +218,20 @@ class Handler:
                 if self._stopped:
                     return
                 if self._enqueue:
+                    # Attribution is resolved here, at emission time, from the record
+                    # itself. The arrival order (or arrival time) of messages in the
+                    # writer thread must not be used to guess the producer. The sequence
+                    # number is committed only after the record has been successfully
+                    # serialized (above) and enqueued (below): if anything fails before
+                    # this point, no number is consumed and no receipt is left behind.
+                    producer_id = self._producer_id_of(record)
+                    sequence = self._producer_sequences.get(producer_id, 0) + 1
+                    str_record.producer = ProducerStamp(producer_id, sequence)
                     self._queue.put(str_record)
+                    self._producer_sequences[producer_id] = sequence
+                    self._send_receipts.append(str_record.producer)
                 else:
+                    str_record.producer = None
                     self._sink.write(str_record)
         except Exception:
             if not self._error_interceptor.should_catch():
@@ -247,6 +276,22 @@ class Handler:
     @property
     def levelno(self):
         return self._levelno
+
+    @property
+    def send_receipts(self):
+        """The stamps of the most recently enqueued messages, as a tuple of receipts.
+
+        Each receipt is a |ProducerStamp| holding only the producer id and the committed
+        sequence number; no record, "extra" dict or other context value is stored here.
+        """
+        return tuple(self._send_receipts)
+
+    @staticmethod
+    def _producer_id_of(record):
+        extra = record["extra"]
+        if "producer_id" in extra:
+            return extra["producer_id"]
+        return record["thread"].id
 
     @staticmethod
     def _format_record(log_format, record):
