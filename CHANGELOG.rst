@@ -23,6 +23,7 @@
 - Make ``logger.catch()`` usable as an asynchronous context manager (`#1084 <https://github.com/Delgan/loguru/issues/1084>`_).
 - Make ``logger.catch()`` compatible with asynchronous generators (`#1302 <https://github.com/Delgan/loguru/issues/1302>`_).
 - Improve feedback for invalid format keys in logger format strings (`#1450 <https://github.com/Delgan/loguru/issues/1450>`_, thanks `@Krishnachaitanyakc <https://github.com/Krishnachaitanyakc>`_).
+- Stamp enqueued messages with a producer identifier and a producer-local monotonically increasing sequence number, committed only after the message has been successfully serialized and handed over to the queue, so that serialization failures leave no sent receipt and the next successful message keeps a contiguous sequence. The sequence is attributed by the producer and never recomputed from arrival order or arrival time, the textual and serialized output formats are unchanged, and the receipts report only stores ``producer_id`` and ``sequence`` without record context values.
 
 
 `0.7.3`_ (2024-12-06)

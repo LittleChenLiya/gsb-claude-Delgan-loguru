@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from threading import Thread
 
 from ._colorizer import Colorizer
+from ._enqueue import EnqueueBook
 from ._locks_machinery import create_handler_lock
 
 
@@ -25,7 +26,25 @@ def memoize(function):
 
 
 class Message(str):
-    __slots__ = ("record",)
+    __slots__ = ("record", "producer_id", "sequence")
+
+    def __new__(cls, string="", *, producer_id=None, sequence=None):
+        message = str.__new__(cls, string)
+        message.producer_id = producer_id
+        message.sequence = sequence
+        return message
+
+    def __getstate__(self):
+        return {
+            "record": self.record,
+            "producer_id": self.producer_id,
+            "sequence": self.sequence,
+        }
+
+    def __setstate__(self, state):
+        self.record = state["record"]
+        self.producer_id = state["producer_id"]
+        self.sequence = state["sequence"]
 
 
 class Handler:
@@ -75,6 +94,7 @@ class Handler:
         self._confirmation_lock = None
         self._owner_process_pid = None
         self._thread = None
+        self._enqueue_book = None
 
         if self._is_formatter_dynamic:
             if self._colorize:
@@ -99,6 +119,7 @@ class Handler:
                 self._confirmation_lock = self._multiprocessing_context.Lock()
             self._queue_lock = create_handler_lock()
             self._owner_process_pid = os.getpid()
+            self._enqueue_book = EnqueueBook()
             self._thread = Thread(
                 target=self._queued_writer, daemon=True, name="loguru-writer-%d" % self._id
             )
@@ -201,7 +222,20 @@ class Handler:
                 if self._stopped:
                     return
                 if self._enqueue:
-                    self._queue.put(str_record)
+                    book = self._enqueue_book
+                    producer_id = book.producer_id
+                    sequence = book.reserve(producer_id)
+                    str_record.producer_id = producer_id
+                    str_record.sequence = sequence
+                    try:
+                        self._queue.put(str_record)
+                    except Exception:
+                        # The message could not be serialized and handed over,
+                        # so its tentative number must not be committed: the
+                        # next successful message keeps a contiguous sequence.
+                        book.retract(producer_id, sequence)
+                        raise
+                    book.commit(producer_id, sequence)
                 else:
                     self._sink.write(str_record)
         except Exception:
@@ -243,6 +277,18 @@ class Handler:
             return
         ansi_code = self._levels_ansi_codes[level_id]
         self._precolorized_formats[level_id] = self._formatter.colorize(ansi_code)
+
+    def enqueue_receipts(self):
+        """Return the receipts of messages successfully serialized for enqueue.
+
+        Each receipt only records the opaque producer identifier and the
+        producer-local sequence number; record data and context ("extra") are
+        never stored. Attribution follows the producer, not the arrival order at
+        the sink side.
+        """
+        if not self._enqueue or self._enqueue_book is None:
+            return []
+        return self._enqueue_book.receipts()
 
     @property
     def levelno(self):
@@ -343,6 +389,7 @@ class Handler:
             state["_sink"] = None
             state["_thread"] = None
             state["_queue_lock"] = None
+            state["_enqueue_book"] = None
         return state
 
     def __setstate__(self, state):
@@ -351,6 +398,8 @@ class Handler:
         self._lock_acquired = threading.local()
         if self._enqueue:
             self._queue_lock = create_handler_lock()
+            if self._enqueue_book is None:
+                self._enqueue_book = EnqueueBook()
         if self._is_formatter_dynamic:
             if self._colorize:
                 self._memoize_dynamic_format = memoize(prepare_colored_format)

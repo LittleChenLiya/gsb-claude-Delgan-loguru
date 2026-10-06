@@ -118,6 +118,8 @@ class Record(TypedDict):
 
 class Message(str):
     record: Record
+    producer_id: Optional[str]
+    sequence: Optional[int]
 
 class Writable(Protocol):
     def write(self, message: Message) -> Any: ...
