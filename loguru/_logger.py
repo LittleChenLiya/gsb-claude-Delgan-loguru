@@ -122,7 +122,7 @@ from ._get_frame import get_frame
 from ._handler import Handler
 from ._locks_machinery import create_logger_lock
 from ._recattrs import RecordException, RecordFile, RecordLevel, RecordProcess, RecordThread
-from ._simple_sinks import AsyncSink, CallableSink, StandardSink, StreamSink
+from ._simple_sinks import AsyncSink, BatchSink, CallableSink, StandardSink, StreamSink
 
 if sys.version_info >= (3, 6):
     from collections.abc import AsyncGenerator
@@ -854,6 +854,19 @@ class Logger:
             wrapped_sink = FileSink(path, **kwargs)
             kwargs = {}
             encoding = wrapped_sink.encoding
+            terminator = "\n"
+            exception_prefix = ""
+        elif isinstance(sink, BatchSink):
+            name = getattr(sink, "name", None) or repr(sink)
+
+            if colorize is None:
+                colorize = False
+
+            # The batch sink is already a sink adapter, it is used as-is so that
+            # regular per-message logging keeps going through its "write()" method
+            # while explicit batches can be sent through its "send_batch()" method.
+            wrapped_sink = sink
+            encoding = "utf8"
             terminator = "\n"
             exception_prefix = ""
         elif hasattr(sink, "write") and callable(sink.write):

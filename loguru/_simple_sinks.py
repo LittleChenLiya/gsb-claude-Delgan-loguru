@@ -239,3 +239,101 @@ class CallableSink:
             Empty list as callable sink has no tasks.
         """
         return []
+
+
+class BatchSink:
+    """A synchronous sink adapter adding begin/end hooks around explicit batches.
+
+    The adapter wraps a callable sink. Messages written individually through
+    :meth:`write` are forwarded one by one, exactly like a regular callable sink.
+    Explicit batches sent through :meth:`send_batch` are delimited by the
+    ``on_batch_start`` and ``on_batch_end`` hooks, the latter receiving the number of
+    successfully delivered messages and the first error raised by the sink (if any).
+
+    Parameters
+    ----------
+    function
+        The callable invoked for each message.
+    on_batch_start
+        An optional callable invoked without argument before a batch is sent.
+    on_batch_end
+        An optional callable invoked as ``on_batch_end(succeeded, first_error)`` once a
+        batch has been processed, where ``succeeded`` is the number of messages
+        successfully delivered and ``first_error`` is the first exception raised by the
+        sink (or ``None`` if the whole batch succeeded).
+    """
+
+    def __init__(self, function, on_batch_start=None, on_batch_end=None):
+        self._function = function
+        self._on_batch_start = on_batch_start
+        self._on_batch_end = on_batch_end
+
+    def write(self, message):
+        """Write a single message, forwarded as-is to the wrapped callable.
+
+        Parameters
+        ----------
+        message
+            The message to pass to the function.
+        """
+        self._function(message)
+
+    def send_batch(self, messages):
+        """Send an explicit batch of messages, guarded by the begin/end hooks.
+
+        Messages are forwarded one by one. As soon as one message fails, the remaining
+        ones are skipped and messages already delivered are not sent again. The end
+        hook is always executed and receives the count of successful deliveries along
+        with the first error encountered. If the end hook itself fails while the sink
+        already failed, the sink error is the one propagated, so that the original
+        cause is not masked by the hook failure.
+
+        Parameters
+        ----------
+        messages
+            An iterable of messages forming the batch.
+
+        Raises
+        ------
+        Exception
+            The first error raised by the wrapped callable, if any. Otherwise, the
+            error raised by the end hook, if any.
+        """
+        if self._on_batch_start is not None:
+            self._on_batch_start()
+
+        succeeded = 0
+        first_error = None
+        for message in messages:
+            try:
+                self._function(message)
+            except Exception as error:
+                first_error = error
+                break
+            succeeded += 1
+
+        hook_error = None
+        if self._on_batch_end is not None:
+            try:
+                self._on_batch_end(succeeded, first_error)
+            except Exception as error:
+                hook_error = error
+
+        if first_error is not None:
+            raise first_error
+        if hook_error is not None:
+            raise hook_error
+
+    def stop(self):
+        """Stop the sink (no-op for batch sink)."""
+        pass
+
+    def tasks_to_complete(self):
+        """Return list of tasks that need to be completed.
+
+        Returns
+        -------
+        list
+            Empty list as batch sink is fully synchronous.
+        """
+        return []

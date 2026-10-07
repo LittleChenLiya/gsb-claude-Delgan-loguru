@@ -11,6 +11,7 @@ from typing import (
     Dict,
     Generator,
     Generic,
+    Iterable,
     List,
     NamedTuple,
     NewType,
@@ -121,6 +122,18 @@ class Message(str):
 
 class Writable(Protocol):
     def write(self, message: Message) -> Any: ...
+
+class BatchSink:
+    def __init__(
+        self,
+        function: Callable[[Message], None],
+        on_batch_start: Optional[Callable[[], None]] = ...,
+        on_batch_end: Optional[Callable[[int, Optional[BaseException]], None]] = ...,
+    ) -> None: ...
+    def write(self, message: Message) -> None: ...
+    def send_batch(self, messages: Iterable[Message]) -> None: ...
+    def stop(self) -> None: ...
+    def tasks_to_complete(self) -> List[Awaitable[None]]: ...
 
 FilterDict = Dict[Optional[str], Union[str, int, bool]]
 FilterFunction = Callable[[Record], bool]
