@@ -8,12 +8,13 @@ import atexit as _atexit
 import sys as _sys
 
 from . import _defaults
+from ._batch_sink import BatchSink
 from ._logger import Core as _Core
 from ._logger import Logger as _Logger
 
 __version__ = "0.7.3"
 
-__all__ = ["logger"]
+__all__ = ["logger", "BatchSink"]
 
 logger = _Logger(
     core=_Core(),
