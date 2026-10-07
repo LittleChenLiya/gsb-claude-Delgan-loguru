@@ -38,6 +38,7 @@ class Handler:
         formatter,
         is_formatter_dynamic,
         filter_,
+        on_filter_error,
         colorize,
         serialize,
         enqueue,
@@ -53,6 +54,7 @@ class Handler:
         self._formatter = formatter
         self._is_formatter_dynamic = is_formatter_dynamic
         self._filter = filter_
+        self._on_filter_error = on_filter_error
         self._colorize = colorize
         self._serialize = serialize
         self._enqueue = enqueue
@@ -130,7 +132,17 @@ class Handler:
                 return
 
             if self._filter is not None:
-                if not self._filter(record):
+                try:
+                    is_allowed = self._filter(record)
+                except Exception as error:
+                    if self._on_filter_error is None:
+                        raise
+                    # The callback is invoked directly (and not through the logger) so
+                    # that the filter error can not be re-emitted as a new log record,
+                    # which would risk infinite recursion.
+                    self._on_filter_error(self._id, record, error)
+                    return
+                if not is_allowed:
                     return
 
             if self._is_formatter_dynamic:

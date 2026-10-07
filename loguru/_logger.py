@@ -277,6 +277,7 @@ class Logger:
         level=_defaults.LOGURU_LEVEL,
         format=_defaults.LOGURU_FORMAT,
         filter=_defaults.LOGURU_FILTER,
+        on_filter_error=None,
         colorize=_defaults.LOGURU_COLORIZE,
         serialize=_defaults.LOGURU_SERIALIZE,
         backtrace=_defaults.LOGURU_BACKTRACE,
@@ -301,6 +302,14 @@ class Logger:
         filter : |callable|_, |str| or |dict|, optional
             A directive optionally used to decide for each logged message whether it should be sent
             to the sink or not.
+        on_filter_error : |callable|_, optional
+            A function invoked as ``on_filter_error(handler_id, record, exception)`` whenever the
+            ``filter`` raises an error while evaluating a message. The faulty record is then
+            dropped for this handler only (other handlers keep processing it according to their
+            own ``catch`` policy). The callback is called directly, the exception is not wrapped
+            into a new log record, so there is no risk of recursive logging. If ``None`` (the
+            default), a filter error is handled like any other handler error, following the
+            ``catch`` policy.
         colorize : |bool|, optional
             Whether the color markups contained in the formatted message should be converted to ansi
             codes for terminal coloration, or stripped otherwise. If ``None``, the choice is
@@ -985,6 +994,12 @@ class Logger:
                 % type(filter).__name__
             )
 
+        if on_filter_error is not None and not callable(on_filter_error):
+            raise TypeError(
+                "Invalid 'on_filter_error', it should be a function or 'None', not: '%s'"
+                % type(on_filter_error).__name__
+            )
+
         if isinstance(level, str):
             levelno = self.level(level).no
         elif isinstance(level, int):
@@ -1051,6 +1066,7 @@ class Logger:
                 formatter=formatter,
                 is_formatter_dynamic=is_formatter_dynamic,
                 filter_=filter_func,
+                on_filter_error=on_filter_error,
                 colorize=colorize,
                 serialize=serialize,
                 enqueue=enqueue,

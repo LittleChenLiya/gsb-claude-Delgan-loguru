@@ -124,6 +124,7 @@ class Writable(Protocol):
 
 FilterDict = Dict[Optional[str], Union[str, int, bool]]
 FilterFunction = Callable[[Record], bool]
+FilterErrorFunction = Callable[[int, Record, Exception], None]
 FormatFunction = Callable[[Record], str]
 PatcherFunction = Callable[[Record], None]
 RotationFunction = Callable[[Message, TextIO], bool]
@@ -137,6 +138,7 @@ class BasicHandlerConfig(TypedDict, total=False):
     level: Union[str, int]
     format: Union[str, FormatFunction]
     filter: Optional[Union[str, FilterFunction, FilterDict]]
+    on_filter_error: Optional[FilterErrorFunction]
     colorize: Optional[bool]
     serialize: bool
     backtrace: bool
@@ -149,6 +151,7 @@ class FileHandlerConfig(TypedDict, total=False):
     level: Union[str, int]
     format: Union[str, FormatFunction]
     filter: Optional[Union[str, FilterFunction, FilterDict]]
+    on_filter_error: Optional[FilterErrorFunction]
     colorize: Optional[bool]
     serialize: bool
     backtrace: bool
@@ -182,6 +185,7 @@ class AsyncHandlerConfig(TypedDict, total=False):
     level: Union[str, int]
     format: Union[str, FormatFunction]
     filter: Optional[Union[str, FilterFunction, FilterDict]]
+    on_filter_error: Optional[FilterErrorFunction]
     colorize: Optional[bool]
     serialize: bool
     backtrace: bool
@@ -210,6 +214,7 @@ class Logger:
         level: Union[str, int] = ...,
         format: Union[str, FormatFunction] = ...,
         filter: Optional[Union[str, FilterFunction, FilterDict]] = ...,
+        on_filter_error: Optional[FilterErrorFunction] = ...,
         colorize: Optional[bool] = ...,
         serialize: bool = ...,
         backtrace: bool = ...,
@@ -226,6 +231,7 @@ class Logger:
         level: Union[str, int] = ...,
         format: Union[str, FormatFunction] = ...,
         filter: Optional[Union[str, FilterFunction, FilterDict]] = ...,
+        on_filter_error: Optional[FilterErrorFunction] = ...,
         colorize: Optional[bool] = ...,
         serialize: bool = ...,
         backtrace: bool = ...,
@@ -243,6 +249,7 @@ class Logger:
         level: Union[str, int] = ...,
         format: Union[str, FormatFunction] = ...,
         filter: Optional[Union[str, FilterFunction, FilterDict]] = ...,
+        on_filter_error: Optional[FilterErrorFunction] = ...,
         colorize: Optional[bool] = ...,
         serialize: bool = ...,
         backtrace: bool = ...,

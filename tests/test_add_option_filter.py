@@ -149,3 +149,73 @@ def test_invalid_filter_builtin(writer):
         ),
     ):
         logger.add(writer, filter=filter)
+
+
+def broken_filter(record):
+    raise RuntimeError("Broken filter")
+
+
+def test_on_filter_error_reports_failed_handler_and_drops_record(writer):
+    received = []
+    errors = []
+
+    good_id = logger.add(writer, format="{message}")
+    bad_id = logger.add(
+        received.append,
+        filter=broken_filter,
+        on_filter_error=lambda *args: errors.append(args),
+        format="{message}",
+    )
+
+    logger.info("Hello")
+
+    # The other handler processed the record normally, following its own "catch" policy.
+    assert writer.read() == "Hello\n"
+    # The record failed for the handler with the broken filter only.
+    assert received == []
+    # The error was reported exactly once (no recursive re-emission of the exception),
+    # with the identity of the failed handler.
+    assert len(errors) == 1
+    handler_id, record, error = errors[0]
+    assert handler_id == bad_id
+    assert handler_id != good_id
+    assert record["message"] == "Hello"
+    assert isinstance(error, RuntimeError)
+    assert str(error) == "Broken filter"
+
+
+def test_on_filter_error_not_affected_by_catch_false(writer):
+    errors = []
+    logger.add(
+        writer,
+        filter=broken_filter,
+        on_filter_error=lambda *args: errors.append(args),
+        catch=False,
+        format="{message}",
+    )
+    logger.info("Hello")
+    assert writer.read() == ""
+    assert len(errors) == 1
+
+
+def test_filter_error_default_behavior_caught(writer, capsys):
+    logger.add(writer, filter=broken_filter, format="{message}")
+    logger.info("Hello")
+    assert writer.read() == ""
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "--- Logging error in Loguru Handler #0 ---" in err
+    assert "RuntimeError: Broken filter" in err
+
+
+def test_filter_error_default_behavior_not_caught(writer):
+    logger.add(writer, filter=broken_filter, catch=False, format="{message}")
+    with pytest.raises(RuntimeError, match="Broken filter"):
+        logger.info("Hello")
+    assert writer.read() == ""
+
+
+@pytest.mark.parametrize("on_filter_error", [-1, 3.4, object(), "foo"])
+def test_invalid_on_filter_error(writer, on_filter_error):
+    with pytest.raises(TypeError, match="Invalid 'on_filter_error'"):
+        logger.add(writer, on_filter_error=on_filter_error)
