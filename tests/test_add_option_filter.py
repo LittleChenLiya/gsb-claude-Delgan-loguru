@@ -149,3 +149,101 @@ def test_invalid_filter_builtin(writer):
         ),
     ):
         logger.add(writer, filter=filter)
+
+
+def broken_filter(record):
+    raise ValueError("Filter error!")
+
+
+def test_filter_error_catch_filter_true(writer, capsys):
+    received = []
+
+    def other_sink(message):
+        received.append(message)
+
+    handler_id = logger.add(
+        writer, filter=broken_filter, format="{message}", catch=False, catch_filter=True
+    )
+    logger.add(other_sink, format="{message}")
+    logger.info("Test")
+
+    out, err = capsys.readouterr()
+    lines = err.strip().splitlines()
+
+    assert writer.read() == ""
+    assert received == ["Test\n"]
+    assert out == ""
+    assert lines[0] == "--- Logging error in Loguru Handler #%d ---" % handler_id
+    assert re.match(r"Record was: \{.*Test.*\}", lines[1])
+    assert lines[-2].startswith("ValueError: Filter error!")
+    assert lines[-1] == "--- End of logging error ---"
+
+
+def test_filter_error_catch_filter_false(writer, capsys):
+    logger.add(writer, filter=broken_filter, format="{message}", catch=True, catch_filter=False)
+    with pytest.raises(ValueError, match="Filter error!"):
+        logger.info("Test")
+
+    out, err = capsys.readouterr()
+    assert writer.read() == ""
+    assert out == err == ""
+
+
+def test_filter_error_default_catch_is_true(writer, capsys):
+    logger.add(writer, filter=broken_filter, format="{message}", catch=True)
+    logger.info("Test")
+
+    out, err = capsys.readouterr()
+    lines = err.strip().splitlines()
+
+    assert writer.read() == ""
+    assert out == ""
+    assert lines[0] == "--- Logging error in Loguru Handler #0 ---"
+    assert lines[-2].startswith("ValueError: Filter error!")
+    assert lines[-1] == "--- End of logging error ---"
+
+
+def test_filter_error_default_catch_is_false(writer, capsys):
+    logger.add(writer, filter=broken_filter, format="{message}", catch=False)
+    with pytest.raises(ValueError, match="Filter error!"):
+        logger.info("Test")
+
+    out, err = capsys.readouterr()
+    assert writer.read() == ""
+    assert out == err == ""
+
+
+def test_filter_error_not_logged_through_handlers(writer, capsys):
+    received = []
+    calls = 0
+
+    def counting_broken_filter(record):
+        nonlocal calls
+        calls += 1
+        raise ValueError("Filter error!")
+
+    def other_sink(message):
+        received.append(message)
+
+    logger.add(writer, filter=counting_broken_filter, format="{message}", catch_filter=True)
+    logger.add(other_sink, format="{message}")
+    logger.info("Test")
+
+    out, err = capsys.readouterr()
+
+    # The filter error is reported on stderr only: it is not wrapped into a new log
+    # record, so the other sink sees the original message exactly once and the faulty
+    # filter is not re-triggered (no recursion).
+    assert received == ["Test\n"]
+    assert calls == 1
+    assert writer.read() == ""
+    assert out == ""
+    assert "ValueError: Filter error!" in err
+
+
+def test_invalid_catch_filter_value(writer):
+    with pytest.raises(
+        TypeError,
+        match=re.escape("Invalid 'catch_filter', it should be a boolean or None, not: 'str'"),
+    ):
+        logger.add(writer, catch_filter="yes")

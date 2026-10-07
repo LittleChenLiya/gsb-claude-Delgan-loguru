@@ -143,6 +143,7 @@ class BasicHandlerConfig(TypedDict, total=False):
     diagnose: bool
     enqueue: bool
     catch: bool
+    catch_filter: Optional[bool]
 
 class FileHandlerConfig(TypedDict, total=False):
     sink: Union[str, PathLikeStr]
@@ -155,6 +156,7 @@ class FileHandlerConfig(TypedDict, total=False):
     diagnose: bool
     enqueue: bool
     catch: bool
+    catch_filter: Optional[bool]
     rotation: Optional[
         Union[
             str,
@@ -188,6 +190,7 @@ class AsyncHandlerConfig(TypedDict, total=False):
     diagnose: bool
     enqueue: bool
     catch: bool
+    catch_filter: Optional[bool]
     context: Optional[Union[str, BaseContext]]
     loop: Optional[AbstractEventLoop]
 
@@ -216,7 +219,8 @@ class Logger:
         diagnose: bool = ...,
         enqueue: bool = ...,
         context: Optional[Union[str, BaseContext]] = ...,
-        catch: bool = ...
+        catch: bool = ...,
+        catch_filter: Optional[bool] = ...
     ) -> int: ...
     @overload
     def add(
@@ -232,6 +236,7 @@ class Logger:
         diagnose: bool = ...,
         enqueue: bool = ...,
         catch: bool = ...,
+        catch_filter: Optional[bool] = ...,
         context: Optional[Union[str, BaseContext]] = ...,
         loop: Optional[AbstractEventLoop] = ...
     ) -> int: ...
@@ -250,6 +255,7 @@ class Logger:
         enqueue: bool = ...,
         context: Optional[Union[str, BaseContext]] = ...,
         catch: bool = ...,
+        catch_filter: Optional[bool] = ...,
         rotation: Optional[
             Union[
                 str,

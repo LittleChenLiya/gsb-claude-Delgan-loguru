@@ -284,6 +284,7 @@ class Logger:
         enqueue=_defaults.LOGURU_ENQUEUE,
         context=_defaults.LOGURU_CONTEXT,
         catch=_defaults.LOGURU_CATCH,
+        catch_filter=_defaults.LOGURU_CATCH_FILTER,
         **kwargs
     ):
         r"""Add a handler sending log messages to a sink adequately configured.
@@ -326,6 +327,13 @@ class Logger:
             Whether errors occurring while sink handles logs messages should be automatically
             caught. If ``True``, an exception message is displayed on |sys.stderr| but the exception
             is not propagated to the caller, preventing your app to crash.
+        catch_filter : |bool|, optional
+            Whether exceptions raised by the ``filter`` should be automatically caught. If
+            ``True``, the faulty record is dropped for this handler only and an error message
+            (identifying the handler) is displayed on |sys.stderr|, while other handlers keep
+            processing the record according to their own ``catch`` policy. If ``False``, the
+            exception is propagated to the caller. If ``None`` (the default), the ``catch``
+            policy applies to filter errors as well.
         **kwargs
             Additional parameters that are only valid to configure a coroutine or file sink (see
             below).
@@ -841,6 +849,16 @@ class Logger:
 
         error_interceptor = ErrorInterceptor(catch, handler_id)
 
+        if catch_filter is None:
+            filter_error_interceptor = error_interceptor
+        elif isinstance(catch_filter, bool):
+            filter_error_interceptor = ErrorInterceptor(catch_filter, handler_id)
+        else:
+            raise TypeError(
+                "Invalid 'catch_filter', it should be a boolean or None, not: '%s'"
+                % type(catch_filter).__name__
+            )
+
         if colorize is None and serialize:
             colorize = False
 
@@ -1057,6 +1075,7 @@ class Logger:
                 multiprocessing_context=context,
                 id_=handler_id,
                 error_interceptor=error_interceptor,
+                filter_error_interceptor=filter_error_interceptor,
                 exception_formatter=exception_formatter,
                 levels_ansi_codes=self._core.levels_ansi_codes,
             )

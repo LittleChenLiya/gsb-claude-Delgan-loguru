@@ -43,6 +43,7 @@ class Handler:
         enqueue,
         multiprocessing_context,
         error_interceptor,
+        filter_error_interceptor,
         exception_formatter,
         id_,
         levels_ansi_codes
@@ -58,6 +59,7 @@ class Handler:
         self._enqueue = enqueue
         self._multiprocessing_context = multiprocessing_context
         self._error_interceptor = error_interceptor
+        self._filter_error_interceptor = filter_error_interceptor
         self._exception_formatter = exception_formatter
         self._id = id_
         self._levels_ansi_codes = levels_ansi_codes  # Warning, reference shared among handlers
@@ -125,14 +127,28 @@ class Handler:
             self._lock_acquired.acquired = False
 
     def emit(self, record, level_id, from_decorator, is_raw, colored_message):
-        try:
-            if self._levelno > record["level"].no:
+        if self._levelno > record["level"].no:
+            return
+
+        if self._filter is not None:
+            # The filter is evaluated before (and independently of) the sink error handling
+            # below, so that a filter exception is not mistaken for a sink error. Whether such
+            # an exception is caught is controlled by the dedicated "catch_filter" policy.
+            try:
+                is_allowed = self._filter(record)
+            except Exception:
+                if not self._filter_error_interceptor.should_catch():
+                    raise
+                # The record is dropped for this handler only and the error is reported
+                # directly to stderr (with the handler id). It is intentionally not logged
+                # through the logger, which would re-enter the handlers (including this very
+                # filter) and could lead to infinite recursion.
+                self._filter_error_interceptor.print(record)
+                return
+            if not is_allowed:
                 return
 
-            if self._filter is not None:
-                if not self._filter(record):
-                    return
-
+        try:
             if self._is_formatter_dynamic:
                 dynamic_format = self._formatter(record)
 
